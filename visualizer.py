@@ -1,3 +1,4 @@
+import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 
@@ -5,8 +6,6 @@ from matplotlib.lines import Line2D
 class LensVisualizer:
     def __init__(self):
         self.fig, self.ax = plt.subplots(figsize=(12, 8))
-
-        # Ray colors for path states
         self.colors = {
             "incident": "red",
             "in_glass": "orange",
@@ -15,62 +14,46 @@ class LensVisualizer:
         }
 
     def draw(self, ray_paths, surfaces, show=True):
-        # --- Draw surfaces ---
-        for idx, surf in enumerate(surfaces):
-            if surf["type"] == "flat":
-                self.ax.axvline(
-                    x=surf["x"],
-                    color="black",
-                    linewidth=2,
-                    label="Front Surface" if idx == 0 else None,
-                )
-            elif surf["type"] == "circular":
-                self.ax.plot(
-                    surf["x"],
-                    surf["y"],
-                    color="black",
-                    linewidth=2,
-                    label="Back Surface" if idx == 1 else None,
-                )
+        # draw parametric surfaces
+        for i, s in enumerate(surfaces):
+            ts = np.linspace(s.t_min, s.t_max, 400)
+            x = [s.x_func(t) for t in ts]
+            y = [s.y_func(t) for t in ts]
+            label = "Front Surface" if i == 0 else "Back Surface"
+            self.ax.plot(x, y, color="black", lw=2, label=label)
 
-        # --- Draw rays ---
+        # draw rays
         for path in ray_paths:
             for seg in path:
-                color = self.colors.get(seg["state"], "gray")
+                state = seg["state"]
+                color = self.colors.get(state, "gray")
                 self.ax.plot(
                     [seg["start"].x, seg["end"].x],
                     [seg["start"].y, seg["end"].y],
                     color=color,
-                    linewidth=1.3,
+                    lw=1.4,
                 )
 
-        # --- Axis and formatting ---
+        # formatting
         self.ax.set_xlabel("X Position")
         self.ax.set_ylabel("Y Position")
         self.ax.set_title("Lens Ray Tracing Simulation")
         self.ax.axis("equal")
-        self.ax.grid(True, alpha=0.3)
+        self.ax.grid(alpha=0.3)
 
-        # --- Custom Legend ---
-        # Create legend handles for the ray colors and surfaces
-        custom_lines = [
+        handles = [
             Line2D([0], [0], color="black", lw=2, label="Front Surface"),
-            Line2D([0], [0], color="black", lw=2, linestyle="-", label="Back Surface"),
-            Line2D(
-                [0], [0], color=self.colors["incident"], lw=2, label="Incident Rays"
-            ),
-            Line2D(
-                [0], [0], color=self.colors["in_glass"], lw=2, label="In Glass Rays"
-            ),
-            Line2D([0], [0], color=self.colors["exit"], lw=2, label="Exit Rays"),
-            Line2D(
-                [0], [0], color=self.colors["reflected"], lw=2, label="Reflected Rays"
-            ),
+            Line2D([0], [0], color="black", lw=2, label="Back Surface"),
+        ] + [
+            Line2D([0], [0], color=c, lw=2, label=n)
+            for n, c in {
+                "Incident Rays": "red",
+                "In‑Glass Rays": "orange",
+                "Exit Rays": "green",
+                "Reflected Rays": "purple",
+            }.items()
         ]
-
-        self.ax.legend(handles=custom_lines, loc="upper right")
+        self.ax.legend(handles=handles, loc="upper right")
         plt.tight_layout()
-
-        # --- Show ---
         if show:
             plt.show()

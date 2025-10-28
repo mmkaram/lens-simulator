@@ -10,7 +10,6 @@ class Simulation:
         self.ray_paths = []
         self.surfaces = []
 
-    # ========== DEBUG-ENABLED TRACE ==========
     def trace_ray_through_lens(self, ray, lens, ray_index=None):
         segments = []
         print(f"\n[TRACE] Ray {ray_index if ray_index is not None else '?'}")
@@ -22,7 +21,7 @@ class Simulation:
         # --- Front Surface ---
         intersection1 = lens.front_surface.intersect(ray)
         if not intersection1:
-            print("  ❌ No intersection with front surface.")
+            print("  X - No intersection with front surface.")
             return segments
 
         print(
@@ -41,7 +40,7 @@ class Simulation:
 
         ray_in_glass = ray.refract(intersection1, normal1, n1, n2)
         if not ray_in_glass:
-            print("  ⚠️  Total internal reflection at front surface.")
+            print("  ! - Total internal reflection at front surface.")
             segments.append(
                 {"start": intersection1, "end": intersection1, "state": "reflected"}
             )
@@ -53,7 +52,7 @@ class Simulation:
         # --- Back Surface ---
         intersection2 = lens.back_surface.intersect(ray_in_glass)
         if not intersection2:
-            print("  ⚠️  Missed back surface — continuing straight out.")
+            print("  ! - Missed back surface — continuing straight out.")
             miss = ray_in_glass.position.add(ray_in_glass.direction.scale(20.0))
             segments.append(
                 {"start": ray_in_glass.position, "end": miss, "state": "exit"}
@@ -80,14 +79,14 @@ class Simulation:
             exit_end = exit_ray.position.add(exit_ray.direction.scale(20.0))
             segments.append({"start": intersection2, "end": exit_end, "state": "exit"})
         else:
-            print("  ⚠️  Total internal reflection at back surface.")
+            print("  ! - Total internal reflection at back surface.")
             segments.append(
                 {"start": intersection2, "end": intersection2, "state": "reflected"}
             )
 
         return segments
 
-    # ========== FULL SIMULATION ==========
+    # Full sim
     def run(self):
         self.ray_paths.clear()
         for i, ray in enumerate(self.rays):
@@ -107,7 +106,7 @@ class Simulation:
         self._build_surface_data()
         return self.ray_paths, self.surfaces
 
-    # ========== SURFACE COORD COLLECTION ==========
+    # Surface coord selection
     def _build_surface_data(self):
         import torch, numpy as np
 
@@ -139,7 +138,7 @@ class Simulation:
                     }
                 )
 
-    # ========== SUMMARY ==========
+    # Summary
     def get_statistics(self):
         total = len(self.rays)
         complete = sum(1 for p in self.ray_paths if p and p[-1]["state"] == "exit")
