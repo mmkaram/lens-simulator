@@ -18,7 +18,7 @@ class Ray:
             New Ray or None if total internal reflection
         """
 
-        # Ensure the normal points *against* the incident ray
+        # Ensure the normal points against the incident ray
         if normal.dot(self.direction) > 0:
             normal = normal.scale(-1.0)
 

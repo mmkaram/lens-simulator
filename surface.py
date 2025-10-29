@@ -118,3 +118,40 @@ class SemiCircleSurface(ParametricSurface):
 
         super().__init__(x_func, y_func, t_min, t_max, n_front, n_back)
         self.center, self.radius, self.direction = center, radius, direction
+
+
+class MeasurementSurface(ParametricSurface):
+    """
+    Virtual detector surface.
+    Collects intersection points and computes
+    ray density (irradiance proxy).
+    """
+
+    def __init__(self, x_pos: float, y_min: float, y_max: float, bins: int = 100):
+        # simple flat parametric plane
+        def x_func(t):
+            return x_pos
+
+        def y_func(t):
+            return t
+
+        super().__init__(x_func, y_func, y_min, y_max, n_front=1.0, n_back=1.0)
+        self.bins = bins
+        self.hits = np.zeros(bins)
+        self.range = (y_min, y_max)
+
+    def record(self, hit_points):
+        ys = [p.y for p in hit_points]
+        self.hits, edges = np.histogram(ys, bins=self.bins, range=self.range)
+        centers = 0.5 * (edges[:-1] + edges[1:])
+        self.profile_y = centers
+        self.profile_I = self.hits / np.max(self.hits)  # normalize
+
+    def plot_profile(self):
+        import matplotlib.pyplot as plt
+
+        plt.plot(self.profile_y, self.profile_I)
+        plt.title("Relative Irradiance Profile")
+        plt.xlabel("Position (y)")
+        plt.ylabel("Normalized Density (a.u.)")
+        plt.show()
