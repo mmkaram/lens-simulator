@@ -108,33 +108,25 @@ class Simulation:
 
     # Surface coord selection
     def _build_surface_data(self):
-        import torch, numpy as np
+        import numpy as np
 
         self.surfaces = []
+
         for lens in self.lenses:
-            if hasattr(lens.front_surface, "point"):
-                self.surfaces.append({"type": "flat", "x": lens.front_surface.point.x})
-
-            if hasattr(lens.back_surface, "center"):
-                C, R = lens.back_surface.center, lens.back_surface.radius
-                theta = torch.linspace(torch.pi / 2, 3 * torch.pi / 2, 300)
-                self.surfaces.append(
-                    {
-                        "type": "circular",
-                        "x": (C.x + R * torch.cos(theta)).numpy(),
-                        "y": (C.y + R * torch.sin(theta)).numpy(),
-                    }
-                )
-
-            if hasattr(lens.back_surface, "x_func") and hasattr(
-                lens.back_surface, "y_func"
-            ):
-                ts = np.linspace(lens.back_surface.t_min, lens.back_surface.t_max, 300)
+            for surf, label in [
+                (lens.front_surface, "front"),
+                (lens.back_surface, "back"),
+            ]:
+                ts = np.linspace(surf.t_min, surf.t_max, 400)
+                x_vals = [surf.x_func(t) for t in ts]
+                y_vals = [surf.y_func(t) for t in ts]
                 self.surfaces.append(
                     {
                         "type": "parametric",
-                        "x": np.array([lens.back_surface.x_func(t) for t in ts]),
-                        "y": np.array([lens.back_surface.y_func(t) for t in ts]),
+                        "which": label,
+                        "x": np.array(x_vals),
+                        "y": np.array(y_vals),
+                        "surface": surf,
                     }
                 )
 
