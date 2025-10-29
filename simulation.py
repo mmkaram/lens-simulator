@@ -1,4 +1,3 @@
-from vec2 import Vec2
 from ray import Ray
 from surface import Side
 
