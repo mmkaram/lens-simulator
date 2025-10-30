@@ -48,8 +48,10 @@ class ParametricSurface(OpticalSurface):
 
     # intersection solver
     def intersect(self, ray):
-        ts = np.linspace(self.t_min, self.t_max, 700)
-        best_p, best_d = None, float("inf")
+        # Start with coarse search
+        ts = np.linspace(self.t_min, self.t_max, 50)
+        best_p, best_d, best_t = None, float("inf"), None
+
         for t in ts:
             p = self.point_at(t)
             to_p = p.sub(ray.position)
@@ -59,9 +61,26 @@ class ParametricSurface(OpticalSurface):
             closest = ray.position.add(ray.direction.scale(proj))
             d = (p.sub(closest)).length()
             if d < best_d:
-                best_d, best_p = d, p
-        if best_d < 1e-1:
+                best_d, best_p, best_t = d, p, t
+
+        if best_d < 1e-1 and best_t is not None:
+            # Refine with 10 samples around best_t
+            dt = (self.t_max - self.t_min) / 50
+            ts_fine = np.linspace(
+                max(self.t_min, best_t - dt), min(self.t_max, best_t + dt), 10
+            )
+            for t in ts_fine:
+                p = self.point_at(t)
+                to_p = p.sub(ray.position)
+                proj = to_p.dot(ray.direction)
+                if proj <= 0:
+                    continue
+                closest = ray.position.add(ray.direction.scale(proj))
+                d = (p.sub(closest)).length()
+                if d < best_d:
+                    best_d, best_p = d, p
             return best_p
+
         return None
 
     # normal at surface
@@ -88,6 +107,21 @@ class LineSurface(ParametricSurface):
             return t
 
         super().__init__(x_func, y_func, y_min, y_max, n_front, n_back)
+
+    def intersect(self, ray):
+        # Ray: P = ray.position + t * ray.direction
+        # Line: x = self.x_func(0)  (constant x)
+        if abs(ray.direction.x) < 1e-10:
+            return None  # Ray parallel to line
+
+        t = (self.x_func(0) - ray.position.x) / ray.direction.x
+        if t <= 0:
+            return None
+
+        hit_y = ray.position.y + t * ray.direction.y
+        if self.t_min <= hit_y <= self.t_max:
+            return Vec2(self.x_func(0), hit_y)
+        return None
 
 
 class SemiCircleSurface(ParametricSurface):
