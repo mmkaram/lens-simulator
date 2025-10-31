@@ -92,7 +92,66 @@ def test_detector():
     detector.plot_profile()
 
 
+def gaussian_density_detector():
+    """
+    Launch a Gaussian DENSITY distribution of rays (more near the center)
+    through two flat surfaces and record the resulting density profile.
+    """
+
+    n_lens = 1.0
+    aperture_y = 5.0
+    x_front_pos = 5.0
+    x_back_pos = 9.0
+    x_detector = 20.0
+
+    # --- Flat "lens" (no focusing) ---
+    front = LineSurface(x_front_pos, -aperture_y, aperture_y, 1.0, n_lens)
+    back = LineSurface(x_back_pos, -aperture_y, aperture_y, n_lens, 1.0)
+    lens = Lens(front, back)
+
+    # --- Create Gaussian DENSITY of rays ---
+    #
+    # We sample ray y‑positions using a Gaussian PDF so that central rays
+    # are denser.  No weights or powers needed.
+    #
+    import random, math
+
+    N_total = 2000  # total rays
+    w0 = 2.0  # beam waist (1/e^2 radius)
+    ys = []
+    for _ in range(N_total * 2):  # oversample then clip
+        # Box–Muller transform gives Gaussian samples
+        u1, u2 = random.random(), random.random()
+        y = w0 * math.sqrt(-0.5 * math.log(u1)) * math.cos(2 * math.pi * u2)
+        if -aperture_y <= y <= aperture_y:
+            ys.append(y)
+        if len(ys) >= N_total:
+            break
+
+    rays = [Ray(Vec2(0, y), Vec2(1, 0)) for y in ys]
+
+    # --- Detector plane ---
+    detector = MeasurementSurface(
+        x_pos=x_detector, y_min=-aperture_y, y_max=aperture_y, bins=25
+    )
+
+    # --- Run the familiar sequence ---
+    print("Starting sim")
+    sim = Simulation(rays, [lens])
+    ray_paths, _ = sim.run()
+
+    print("Starting viz")
+    viz = LensVisualizer()
+    viz.draw(ray_paths, [front, back])
+
+    print("Starting density sim")
+    hits = [rp[-1]["end"] for rp in ray_paths if rp]
+    detector.record(hits)
+    detector.plot_profile()
+
+
 if __name__ == "__main__":
     # convex_back_lens()
     # concave_back_lens()
-    test_detector()
+    # test_detector()
+    gaussian_density_detector()
