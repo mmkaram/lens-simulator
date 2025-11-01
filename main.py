@@ -28,7 +28,7 @@ def straight():
 
 
 def curved():
-    N = 500
+    N = 50000
     y = torch.linspace(-5, 5, N)
     rays = RayBatch(
         pos=torch.stack((torch.zeros_like(y), y), dim=-1),
@@ -62,7 +62,7 @@ def curved():
 
 
 def focus():
-    N = 700
+    N = 50
     y = torch.linspace(-4, 4, N)
     rays = RayBatch(
         pos=torch.stack((torch.zeros_like(y), y), dim=-1),
@@ -80,11 +80,9 @@ def focus():
 
     # --- Back Surface (parametric, focusing) ---
     def x_func(t):
-        under = (f - x0) ** 2 - (n_lens**2 - 1) * (t**2)
+        under = (f - x_front) ** 2 + (n_lens**2 - 1) * (t**2)
         under = torch.clamp(under, min=0.0)
-        return (n_lens**2 * (f - x0) + n_lens * torch.sqrt(under)) / (
-            n_lens**2 - 1
-        ) + x0
+        return x_front + (n_lens * (f - x_front) - torch.sqrt(under)) / (n_lens**2 - 1)
 
     def y_func(t):
         return t
@@ -104,10 +102,6 @@ def focus():
     viz.plot_surface(front, color="black", label="Front Surface")
     viz.plot_surface(back, color="black", label="Focusing Back Surface")
     viz.plot_rays(sim.paths, alpha=0.5)
-
-    # mark focus point for reference
-    viz.ax.scatter([f], [0], color="blue", s=80, label="Focus")
-    viz.ax.legend(loc="upper right")
     viz.show()
 
 
