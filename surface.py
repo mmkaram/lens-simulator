@@ -77,26 +77,46 @@ class ParametricSurface(Surface):
         normals = normals / (torch.norm(normals, dim=-1, keepdim=True) + 1e-12)
         return normals
 
-    def intersect(self, rays):
-        # iterative refinement: coarse x‑scan + local Newton step
-        N, M = rays.pos.shape[0], 200
-        t_samples = torch.linspace(self.t_min, self.t_max, M)
-        curve = self.points(t_samples)  # (M, 2)
+    def intersect(self, rays, max_iter=10, tol=1e-6):
+        """
+        Vectorized differentiable Newton iteration to find intersection of each ray
+        with the parametric curve defined by x(t), y(t).
+        """
+        # Initial guess for t: just use the ray's y-position (good if y ≈ t)
+        t = rays.pos[:, 1].clone().detach().requires_grad_(True)
 
-        pos_x, pos_y = rays.pos[:, 0], rays.pos[:, 1]
-        dir_x, dir_y = rays.dir[:, 0], rays.dir[:, 1]
+        for _ in range(max_iter):
+            # Compute x(t), y(t)
+            x_t = self.x_func(t)
+            y_t = self.y_func(t)
 
-        # project each curve sample into ray space
-        # analytic t_r = (x_curve - x_pos) / dir_x
-        t_r = (curve[:, 0][None, :] - pos_x[:, None]) / (dir_x[:, None] + 1e-12)
-        y_r = pos_y[:, None] + t_r * dir_y[:, None]
-        diff = (y_r - curve[:, 1][None, :]).abs()  # |y_ray - y_curve|
-        idx = diff.argmin(dim=1)  # best curve sample
+            # Residual f(t)
+            f = y_t - (
+                rays.pos[:, 1]
+                + rays.dir[:, 1] * ((x_t - rays.pos[:, 0]) / (rays.dir[:, 0] + 1e-12))
+            )
 
-        hits = curve[idx]
-        # mask hits behind the ray start
-        miss = (curve[idx][:, 0] - pos_x) * dir_x < 0
+            # Compute derivative df/dt using autograd
+            df = torch.autograd.grad(f.sum(), t, create_graph=True)[0]
+
+            # Newton step (clamp to stay within bounds)
+            t_next = t - f / (df + 1e-12)
+            t = torch.clamp(t_next, self.t_min, self.t_max)
+
+            # Early stopping (stop refining when f is small)
+            if torch.all(torch.abs(f) < tol):
+                break
+
+        # Compute final intersection points
+        hit_x = self.x_func(t)
+        hit_y = self.y_func(t)
+        hits = torch.stack((hit_x, hit_y), dim=-1)
+
+        # Mark invalid intersections (behind or diverging)
+        t_ray = (hit_x - rays.pos[:, 0]) / (rays.dir[:, 0] + 1e-12)
+        miss = t_ray < 0
         hits[miss] = torch.tensor([float("nan"), float("nan")], dtype=hits.dtype)
+
         return hits
 
 
