@@ -68,7 +68,7 @@ class Simulation:
             rays.dir = rays.dir[valid]
 
             # Extend each exiting ray forward for visualization
-            exit_end = rays.pos + rays.dir * 10.0
+            exit_end = rays.pos + rays.dir * 40.0
             for s, e in zip(rays.pos, exit_end):
                 self.paths.append((s.detach().cpu(), e.detach().cpu()))
 
