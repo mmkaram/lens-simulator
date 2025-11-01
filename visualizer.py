@@ -1,59 +1,38 @@
-import numpy as np
+import torch
 import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
+from surface import Surface
 
 
-class LensVisualizer:
+class Visualizer:
     def __init__(self):
-        self.fig, self.ax = plt.subplots(figsize=(12, 8))
-        self.colors = {
-            "incident": "red",
-            "in_glass": "orange",
-            "exit": "green",
-            "reflected": "purple",
-        }
+        self.fig, self.ax = plt.subplots(figsize=(10, 6))
 
-    def draw(self, ray_paths, surfaces, show=True):
-        # draw parametric surfaces
-        for i, s in enumerate(surfaces):
-            ts = np.linspace(s.t_min, s.t_max, 400)
-            x = [s.x_func(t) for t in ts]
-            y = [s.y_func(t) for t in ts]
-            label = "Front Surface" if i == 0 else "Back Surface"
-            self.ax.plot(x, y, color="black", lw=2, label=label)
+    def plot_surface(self, surface: Surface, color="black", label=None):
+        t_vals = torch.linspace(surface.t_min, surface.t_max, 200)
+        pts = surface.points(t_vals)
+        self.ax.plot(
+            pts[:, 0].detach(),
+            pts[:, 1].detach(),
+            color=color,
+            lw=2,
+            label=label,
+        )
 
-        # draw rays
-        for path in ray_paths:
-            for seg in path:
-                state = seg["state"]
-                color = self.colors.get(state, "gray")
-                self.ax.plot(
-                    [seg["start"].x, seg["end"].x],
-                    [seg["start"].y, seg["end"].y],
-                    color=color,
-                    lw=1.4,
-                )
+    def plot_rays(self, paths, color="orange", alpha=0.5):
+        for s, e in paths:
+            self.ax.plot(
+                [s[0], e[0]],
+                [s[1], e[1]],
+                color=color,
+                lw=0.8,
+                alpha=alpha,
+            )
 
-        # formatting
-        self.ax.set_xlabel("X Position")
-        self.ax.set_ylabel("Y Position")
-        self.ax.set_title("Lens Ray Tracing Simulation")
+    def show(self):
+        self.ax.set_xlabel("X position")
+        self.ax.set_ylabel("Y position")
+        self.ax.set_title("Ray trace through lens system")
         self.ax.axis("equal")
         self.ax.grid(alpha=0.3)
-
-        handles = [
-            Line2D([0], [0], color="black", lw=2, label="Front Surface"),
-            Line2D([0], [0], color="black", lw=2, label="Back Surface"),
-        ] + [
-            Line2D([0], [0], color=c, lw=2, label=n)
-            for n, c in {
-                "Incident Rays": "red",
-                "In‑Glass Rays": "orange",
-                "Exit Rays": "green",
-                "Reflected Rays": "purple",
-            }.items()
-        ]
-        self.ax.legend(handles=handles, loc="upper right")
         plt.tight_layout()
-        if show:
-            plt.show()
+        plt.show()

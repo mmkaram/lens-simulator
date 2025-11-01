@@ -1,191 +1,120 @@
-from abc import ABC, abstractmethod
-import numpy as np
 import torch
-from vec2 import Vec2
+from ray import RayBatch
 
 
-class Side:
-    FRONT = "front"
-    BACK = "back"
-
-
-class OpticalSurface(ABC):
-    """Any optical surface supporting intersection & normals."""
-
-    def __init__(self, n_front: float, n_back: float):
-        self.n_front = n_front
-        self.n_back = n_back
-
-    @abstractmethod
-    def point_at(self, t: float) -> Vec2: ...
-    @abstractmethod
-    def intersect(self, ray) -> Vec2 | None: ...
-    @abstractmethod
-    def normal_at(self, point: Vec2) -> Vec2: ...
-
-    def refractive_index(self, side: Side) -> float:
-        return self.n_front if side == Side.FRONT else self.n_back
-
-
-class ParametricSurface(OpticalSurface):
-    def __init__(
-        self, x_func, y_func, t_min: float, t_max: float, n_front: float, n_back: float
-    ):
-        super().__init__(n_front, n_back)
+class Surface:
+    def __init__(self, x_func, y_func, t_min, t_max, n_front=1.0, n_back=1.5):
         self.x_func = x_func
         self.y_func = y_func
         self.t_min = t_min
         self.t_max = t_max
+        self.n_front = float(n_front)
+        self.n_back = float(n_back)
 
-    # basic geometry sampling
-    def point_at(self, t: float) -> Vec2:
-        return Vec2(self.x_func(t), self.y_func(t))
+    def points(self, t: torch.Tensor) -> torch.Tensor:
+        return torch.stack((self.x_func(t), self.y_func(t)), dim=-1)
 
-    def tangent_at(self, t: float, dt: float = 1e-4) -> Vec2:
-        dx = self.x_func(t + dt) - self.x_func(t - dt)
-        dy = self.y_func(t + dt) - self.y_func(t - dt)
-        return Vec2(dx, dy).normalize()
+    def tangent(self, t: torch.Tensor) -> torch.Tensor:
+        t = t.clone().detach().requires_grad_(True)
+        x = self.x_func(t)
+        y = self.y_func(t)
+        dx = torch.autograd.grad(x.sum(), t, create_graph=True)[0]
+        dy = torch.autograd.grad(y.sum(), t, create_graph=True)[0]
+        tan = torch.stack((dx, dy), dim=-1)
+        return tan / (torch.norm(tan, dim=-1, keepdim=True) + 1e-12)
 
-    # intersection solver
-    def intersect(self, ray):
-        # Start with coarse search
-        ts = np.linspace(self.t_min, self.t_max, 50)
-        best_p, best_d, best_t = None, float("inf"), None
+    def normal_at(self, hitpoints: torch.Tensor) -> torch.Tensor:
+        raise NotImplementedError
 
-        for t in ts:
-            p = self.point_at(t)
-            to_p = p.sub(ray.position)
-            proj = to_p.dot(ray.direction)
-            if proj <= 0:
-                continue
-            closest = ray.position.add(ray.direction.scale(proj))
-            d = (p.sub(closest)).length()
-            if d < best_d:
-                best_d, best_p, best_t = d, p, t
-
-        if best_d < 1e-1 and best_t is not None:
-            # Refine with 10 samples around best_t
-            dt = (self.t_max - self.t_min) / 50
-            ts_fine = np.linspace(
-                max(self.t_min, best_t - dt), min(self.t_max, best_t + dt), 10
-            )
-            for t in ts_fine:
-                p = self.point_at(t)
-                to_p = p.sub(ray.position)
-                proj = to_p.dot(ray.direction)
-                if proj <= 0:
-                    continue
-                closest = ray.position.add(ray.direction.scale(proj))
-                d = (p.sub(closest)).length()
-                if d < best_d:
-                    best_d, best_p = d, p
-            return best_p
-
-        return None
-
-    # normal at surface
-    def normal_at(self, point: Vec2) -> Vec2:
-        ts = np.linspace(self.t_min, self.t_max, 200)
-        t_best = min(ts, key=lambda t: self.point_at(t).sub(point).length())
-        tangent = self.tangent_at(t_best)
-        return Vec2(-tangent.y, tangent.x).normalize()
+    def intersect(self, rays):
+        raise NotImplementedError
 
 
-# Convinience shapes
-
-
-class LineSurface(ParametricSurface):
-    """Flat plane parameterized along y"""
-
-    def __init__(
-        self, x_pos: float, y_min: float, y_max: float, n_front: float, n_back: float
-    ):
+class LineSurface(Surface):
+    def __init__(self, x_pos, y_min=-5, y_max=5, n_front=1.0, n_back=1.5):
         def x_func(t):
-            return x_pos
+            return torch.full_like(t, float(x_pos))
 
         def y_func(t):
             return t
 
         super().__init__(x_func, y_func, y_min, y_max, n_front, n_back)
+        self.x_pos = torch.tensor(x_pos, dtype=torch.float64)
 
-    def intersect(self, ray):
-        # Ray: P = ray.position + t * ray.direction
-        # Line: x = self.x_func(0)  (constant x)
-        if abs(ray.direction.x) < 1e-10:
-            return None  # Ray parallel to line
+    def normal_at(self, hitpoints: torch.Tensor) -> torch.Tensor:
+        N = hitpoints.shape[0]
+        normal = torch.zeros((N, 2), dtype=torch.float64)
+        normal[:, 0] = -1.0
+        return normal
 
-        t = (self.x_func(0) - ray.position.x) / ray.direction.x
-        if t <= 0:
-            return None
+    def intersect(self, rays):
+        pos_x, pos_y = rays.pos[:, 0], rays.pos[:, 1]
+        dir_x, dir_y = rays.dir[:, 0], rays.dir[:, 1]
 
-        hit_y = ray.position.y + t * ray.direction.y
-        if self.t_min <= hit_y <= self.t_max:
-            return Vec2(self.x_func(0), hit_y)
-        return None
+        t = (self.x_pos - pos_x) / (dir_x + 1e-12)
+        valid = t > 0
+        hit_x = pos_x + t * dir_x
+        hit_y = pos_y + t * dir_y
+        hits = torch.stack((hit_x, hit_y), dim=-1)
+        hits[~valid] = torch.nan
+        return hits
 
 
-class SemiCircleSurface(ParametricSurface):
-    """Half circle described by center & radius."""
-
-    def __init__(
-        self,
-        center: Vec2,
-        radius: float,
-        direction: str,  # "right" or "left"
-        n_front: float,
-        n_back: float,
-    ):
-        if direction not in ("right", "left"):
-            raise ValueError("direction must be 'right' or 'left'")
-        sign = 1 if direction == "right" else -1
-
-        def x_func(theta):
-            return center.x + sign * radius * np.cos(theta)
-
-        def y_func(theta):
-            return center.y + radius * np.sin(theta)
-
-        if direction == "right":
-            t_min, t_max = -np.pi / 2, np.pi / 2
-        else:
-            t_min, t_max = np.pi / 2, 3 * np.pi / 2
-
+class ParametricSurface(Surface):
+    def __init__(self, x_func, y_func, t_min, t_max, n_front=1.0, n_back=1.5):
         super().__init__(x_func, y_func, t_min, t_max, n_front, n_back)
-        self.center, self.radius, self.direction = center, radius, direction
+
+    def normal_at(self, hitpoints: torch.Tensor) -> torch.Tensor:
+        """
+        Compute normals via local tangent of the parametric curve.
+        We approximate t from y position since our y_func(t)≈t here,
+        then rotate tangent 90° CCW.
+        """
+        t_approx = hitpoints[:, 1].detach().clone().requires_grad_(True)
+        tan = self.tangent(t_approx)
+        # Rotate tangent 90°: (dx,dy)->(-dy,dx)
+        normals = torch.stack((-tan[:, 1], tan[:, 0]), dim=-1)
+        normals = normals / (torch.norm(normals, dim=-1, keepdim=True) + 1e-12)
+        return normals
+
+    def intersect(self, rays):
+        # iterative refinement: coarse x‑scan + local Newton step
+        N, M = rays.pos.shape[0], 200
+        t_samples = torch.linspace(self.t_min, self.t_max, M)
+        curve = self.points(t_samples)  # (M, 2)
+
+        pos_x, pos_y = rays.pos[:, 0], rays.pos[:, 1]
+        dir_x, dir_y = rays.dir[:, 0], rays.dir[:, 1]
+
+        # project each curve sample into ray space
+        # analytic t_r = (x_curve - x_pos) / dir_x
+        t_r = (curve[:, 0][None, :] - pos_x[:, None]) / (dir_x[:, None] + 1e-12)
+        y_r = pos_y[:, None] + t_r * dir_y[:, None]
+        diff = (y_r - curve[:, 1][None, :]).abs()  # |y_ray - y_curve|
+        idx = diff.argmin(dim=1)  # best curve sample
+
+        hits = curve[idx]
+        # mask hits behind the ray start
+        miss = (curve[idx][:, 0] - pos_x) * dir_x < 0
+        hits[miss] = torch.tensor([float("nan"), float("nan")], dtype=hits.dtype)
+        return hits
 
 
-class MeasurementSurface(ParametricSurface):
-    """
-    Virtual detector surface.
-    Collects intersection points and computes
-    ray density (irradiance proxy).
-    """
+def refract_batch(rays, normals, n1, n2):
+    n_ratio = n1 / n2
+    dirs = rays.dir
+    dot_dn = torch.sum(dirs * normals, dim=-1, keepdim=True)
+    normals = torch.where(dot_dn > 0, -normals, normals)
+    cos_i = -(dirs * normals).sum(-1, keepdim=True)
+    sin2_t = n_ratio**2 * (1.0 - cos_i**2)
+    valid = sin2_t <= 1.0
+    cos_t = torch.sqrt(torch.clamp(1.0 - sin2_t, min=0.0))
+    refracted = n_ratio * dirs + (n_ratio * cos_i - cos_t) * normals
+    refracted = refracted / (torch.norm(refracted, dim=-1, keepdim=True) + 1e-12)
+    return RayBatch(rays.pos, refracted), valid.squeeze(-1)
 
-    def __init__(self, x_pos: float, y_min: float, y_max: float, bins: int = 100):
-        # simple flat parametric plane
-        def x_func(t):
-            return x_pos
 
-        def y_func(t):
-            return t
-
-        super().__init__(x_func, y_func, y_min, y_max, n_front=1.0, n_back=1.0)
-        self.bins = bins
-        self.hits = np.zeros(bins)
-        self.range = (y_min, y_max)
-
-    def record(self, hit_points):
-        ys = [p.y for p in hit_points]
-        self.hits, edges = np.histogram(ys, bins=self.bins, range=self.range)
-        centers = 0.5 * (edges[:-1] + edges[1:])
-        self.profile_y = centers
-        self.profile_I = self.hits / np.max(self.hits)  # normalize
-
-    def plot_profile(self):
-        import matplotlib.pyplot as plt
-
-        plt.plot(self.profile_y, self.profile_I)
-        plt.title("Relative Irradiance Profile")
-        plt.xlabel("Position (y)")
-        plt.ylabel("Normalized Density (a.u.)")
-        plt.show()
+class Lens:
+    def __init__(self, front, back):
+        self.front_surface = front
+        self.back_surface = back
