@@ -62,23 +62,22 @@ def curved():
 
 
 def focus():
-    N = 50
+    N = 100
     y = torch.linspace(-4, 4, N)
     rays = RayBatch(
         pos=torch.stack((torch.zeros_like(y), y), dim=-1),
         dir=torch.tensor([[1.0, 0.0]]).repeat(N, 1),
     )
 
-    # --- Lens parameters ---
+    # Lens parameters
     n_lens = 1.5
     x_front = 5.0  # position of flat front surface
-    x0 = 9.0  # reference point of back surface
-    f = 25.0  # desired focus position (where rays converge)
+    f = 25.0  # desired focus position (where rays converge)(borked)
 
-    # --- Front Surface (flat) ---
+    # Front Surface (flat)
     front = LineSurface(x_front, -4, 4, 1.0, n_lens)
 
-    # --- Back Surface (parametric, focusing) ---
+    # Back Surface (parametric, focusing)
     def x_func(t):
         under = (f - x_front) ** 2 + (n_lens**2 - 1) * (t**2)
         under = torch.clamp(under, min=0.0)
@@ -89,7 +88,7 @@ def focus():
 
     back = ParametricSurface(x_func, y_func, -4, 4, n_lens, 1.0)
 
-    # --- Simulation ---
+    # Simulation
     sim = Simulation(rays, [Lens(front, back)])
     out = sim.run()
 
@@ -97,7 +96,7 @@ def focus():
         f"{out.pos.shape[0]} rays exited the system (should all intersect near x={f})."
     )
 
-    # --- Visualization ---
+    # Visualization
     viz = Visualizer()
     viz.plot_surface(front, color="black", label="Front Surface")
     viz.plot_surface(back, color="black", label="Focusing Back Surface")
