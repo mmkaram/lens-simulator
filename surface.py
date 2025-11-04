@@ -121,16 +121,37 @@ class ParametricSurface(Surface):
 
 
 def refract_batch(rays, normals, n1, n2):
+    # Ratio of refractive indices (n₁ / n₂)
     n_ratio = n1 / n2
+
+    # Incident direction vectors
     dirs = rays.dir
+
+    # Dot product between directions and surface normals (alignment)
     dot_dn = torch.sum(dirs * normals, dim=-1, keepdim=True)
+
+    # Flip normals that point in the same direction as the ray
     normals = torch.where(dot_dn > 0, -normals, normals)
+
+    # Cosine of incident angle: cosθᵢ = −(d·n)
     cos_i = -(dirs * normals).sum(-1, keepdim=True)
+
+    # Snell’s law: sin²θₜ = (n₁/n₂)² (1 − cos²θᵢ)
     sin2_t = n_ratio**2 * (1.0 - cos_i**2)
+
+    # Valid rays: total internal reflection occurs when sin²θₜ > 1
     valid = sin2_t <= 1.0
+
+    # Cosine of transmitted angle: cosθₜ = √(1 − sin²θₜ)
     cos_t = torch.sqrt(torch.clamp(1.0 - sin2_t, min=0.0))
+
+    # Refracted direction (vector form of Snell’s law)
     refracted = n_ratio * dirs + (n_ratio * cos_i - cos_t) * normals
+
+    # Normalize refracted directions to unit length
     refracted = refracted / (torch.norm(refracted, dim=-1, keepdim=True) + 1e-12)
+
+    # Return new batch of rays and mask of those that refracted (not totally reflected)
     return RayBatch(rays.pos, refracted), valid.squeeze(-1)
 
 
