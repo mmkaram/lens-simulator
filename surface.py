@@ -29,25 +29,42 @@ class Surface:
     def intersect(self, rays):
         raise NotImplementedError
 
+    def to(self, device):
+        """Optional helper to move this surface to a device."""
+        if hasattr(self, "x_pos") and isinstance(self.x_pos, torch.Tensor):
+            self.x_pos = self.x_pos.to(device)
+        return self
+
 
 class LineSurface(Surface):
     def __init__(self, x_pos, y_min=-5, y_max=5, n_front=1.0, n_back=1.5):
         def x_func(t):
-            return torch.full_like(t, float(x_pos))
+            return torch.full_like(t, float(x_pos), device=t.device)
 
         def y_func(t):
             return t
 
         super().__init__(x_func, y_func, y_min, y_max, n_front, n_back)
-        self.x_pos = torch.tensor(x_pos, dtype=torch.float64)
+        # Do NOT fix device here — we'll move this dynamically on intersect
+        self.x_pos_value = float(x_pos)
+        self._device = None  # track last device
 
     def normal_at(self, hitpoints: torch.Tensor) -> torch.Tensor:
         N = hitpoints.shape[0]
-        normal = torch.zeros((N, 2), dtype=torch.float64)
+        normal = torch.zeros((N, 2), dtype=torch.float64, device=hitpoints.device)
         normal[:, 0] = -1.0
         return normal
 
     def intersect(self, rays):
+        # ensure we have a tensor version of x_pos on the same device and dtype as incoming rays
+        device = rays.pos.device
+        dtype = rays.pos.dtype
+        self.x_pos = torch.tensor(
+            self.x_pos_value,
+            dtype=dtype,
+            device=device,
+        )
+
         pos_x, pos_y = rays.pos[:, 0], rays.pos[:, 1]
         dir_x, dir_y = rays.dir[:, 0], rays.dir[:, 1]
 
@@ -56,7 +73,11 @@ class LineSurface(Surface):
         hit_x = pos_x + t * dir_x
         hit_y = pos_y + t * dir_y
         hits = torch.stack((hit_x, hit_y), dim=-1)
-        hits[~valid] = torch.nan
+        hits[~valid] = torch.tensor(
+            [float("nan"), float("nan")],
+            dtype=hits.dtype,
+            device=hits.device,
+        )
         return hits
 
 
@@ -72,7 +93,6 @@ class ParametricSurface(Surface):
         """
         t_approx = hitpoints[:, 1].detach().clone().requires_grad_(True)
         tan = self.tangent(t_approx)
-        # Rotate tangent 90°: (dx,dy)->(-dy,dx)
         normals = torch.stack((-tan[:, 1], tan[:, 0]), dim=-1)
         normals = normals / (torch.norm(normals, dim=-1, keepdim=True) + 1e-12)
         return normals
@@ -82,41 +102,36 @@ class ParametricSurface(Surface):
         Vectorized differentiable Newton iteration to find intersection of each ray
         with the parametric curve defined by x(t), y(t).
         """
-        # Initial guess for t: just use the ray's y-position (good if y ≈ t)
         t = rays.pos[:, 1].clone().detach().requires_grad_(True)
 
         for _ in range(max_iter):
-            # Compute x(t), y(t)
             x_t = self.x_func(t)
             y_t = self.y_func(t)
 
-            # Residual f(t)
             f = y_t - (
                 rays.pos[:, 1]
                 + rays.dir[:, 1] * ((x_t - rays.pos[:, 0]) / (rays.dir[:, 0] + 1e-12))
             )
 
-            # Compute derivative df/dt using autograd
             df = torch.autograd.grad(f.sum(), t, create_graph=True)[0]
 
-            # Newton step (clamp to stay within bounds)
             t_next = t - f / (df + 1e-12)
             t = torch.clamp(t_next, self.t_min, self.t_max)
 
-            # Early stopping (stop refining when f is small)
             if torch.all(torch.abs(f) < tol):
                 break
 
-        # Compute final intersection points
         hit_x = self.x_func(t)
         hit_y = self.y_func(t)
         hits = torch.stack((hit_x, hit_y), dim=-1)
 
-        # Mark invalid intersections (behind or diverging)
         t_ray = (hit_x - rays.pos[:, 0]) / (rays.dir[:, 0] + 1e-12)
         miss = t_ray < 0
-        hits[miss] = torch.tensor([float("nan"), float("nan")], dtype=hits.dtype)
-
+        hits[miss] = torch.tensor(
+            [float("nan"), float("nan")],
+            dtype=hits.dtype,
+            device=hits.device,
+        )
         return hits
 
 
@@ -124,38 +139,33 @@ def refract_batch(rays, normals, n1, n2):
     # Ratio of refractive indices (n₁ / n₂)
     n_ratio = n1 / n2
 
-    # Incident direction vectors
     dirs = rays.dir
-
-    # Dot product between directions and surface normals (alignment)
     dot_dn = torch.sum(dirs * normals, dim=-1, keepdim=True)
-
-    # Flip normals that point in the same direction as the ray
     normals = torch.where(dot_dn > 0, -normals, normals)
 
-    # Cosine of incident angle: cosθᵢ = −(d·n)
     cos_i = -(dirs * normals).sum(-1, keepdim=True)
-
-    # Snell’s law: sin²θₜ = (n₁/n₂)² (1 − cos²θᵢ)
     sin2_t = n_ratio**2 * (1.0 - cos_i**2)
-
-    # Valid rays: total internal reflection occurs when sin²θₜ > 1
     valid = sin2_t <= 1.0
 
-    # Cosine of transmitted angle: cosθₜ = √(1 − sin²θₜ)
     cos_t = torch.sqrt(torch.clamp(1.0 - sin2_t, min=0.0))
-
-    # Refracted direction (vector form of Snell’s law)
     refracted = n_ratio * dirs + (n_ratio * cos_i - cos_t) * normals
-
-    # Normalize refracted directions to unit length
     refracted = refracted / (torch.norm(refracted, dim=-1, keepdim=True) + 1e-12)
 
-    # Return new batch of rays and mask of those that refracted (not totally reflected)
-    return RayBatch(rays.pos, refracted), valid.squeeze(-1)
+    # make sure both pos and dir are on same device
+    pos = rays.pos.to(normals.device)
+    refracted = refracted.to(normals.device)
+
+    return RayBatch(pos, refracted), valid.squeeze(-1)
 
 
 class Lens:
     def __init__(self, front, back):
         self.front_surface = front
         self.back_surface = back
+
+    def to(self, device):
+        if hasattr(self.front_surface, "to"):
+            self.front_surface.to(device)
+        if hasattr(self.back_surface, "to"):
+            self.back_surface.to(device)
+        return self

@@ -5,6 +5,19 @@ from simulation import Simulation
 from visualizer import Visualizer
 
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(device)
+
+PREFER = "gpu"
+
+if PREFER.lower() == "gpu" and torch.cuda.is_available():
+    device = torch.device("cuda")
+else:
+    device = torch.device("cpu")
+
+print(f"Running on device: {device}")
+
+
 def straight():
     N = 4000
     y = torch.linspace(-5, 5, N)
@@ -62,46 +75,45 @@ def curved():
 
 
 def focus():
-    N = 100
-    y = torch.linspace(-4, 4, N)
+    N = 1000000
+    y = torch.linspace(-4, 4, N, device=device)
     rays = RayBatch(
         pos=torch.stack((torch.zeros_like(y), y), dim=-1),
-        dir=torch.tensor([[1.0, 0.0]]).repeat(N, 1),
+        dir=torch.tensor([[1.0, 0.0]], device=device).repeat(N, 1),
+    ).to(device)
+
+    n_lens = 1.5
+    x_front = 5.0
+    f = 25.0
+
+    front = LineSurface(x_front, -4, 4, 1.0, n_lens)
+    back = ParametricSurface(
+        lambda t: x_front
+        + (
+            n_lens * (f - x_front)
+            - torch.sqrt(
+                torch.clamp((f - x_front) ** 2 + (n_lens**2 - 1) * (t**2), min=0.0)
+            )
+        )
+        / (n_lens**2 - 1),
+        lambda t: t,
+        -4,
+        4,
+        n_lens,
+        1.0,
     )
 
-    # Lens parameters
-    n_lens = 1.5
-    x_front = 5.0  # position of flat front surface
-    f = 25.0  # desired focus position (where rays converge)(borked)
-
-    # Front Surface (flat)
-    front = LineSurface(x_front, -4, 4, 1.0, n_lens)
-
-    # Back Surface (parametric, focusing)
-    def x_func(t):
-        under = (f - x_front) ** 2 + (n_lens**2 - 1) * (t**2)
-        under = torch.clamp(under, min=0.0)
-        return x_front + (n_lens * (f - x_front) - torch.sqrt(under)) / (n_lens**2 - 1)
-
-    def y_func(t):
-        return t
-
-    back = ParametricSurface(x_func, y_func, -4, 4, n_lens, 1.0)
-
-    # Simulation
-    sim = Simulation(rays, [Lens(front, back)])
+    lens = Lens(front, back).to(device)
+    sim = Simulation(rays, [lens]).to(device)
     out = sim.run()
 
-    print(
-        f"{out.pos.shape[0]} rays exited the system (should all intersect near x={f})."
-    )
+    print(f"{out.pos.shape[0]} rays exited (expected near focus x={f}).")
 
-    # Visualization
-    viz = Visualizer()
-    viz.plot_surface(front, color="black", label="Front Surface")
-    viz.plot_surface(back, color="black", label="Focusing Back Surface")
-    viz.plot_rays(sim.paths, alpha=0.5)
-    viz.show()
+    # viz = Visualizer()
+    # viz.plot_surface(front, color="black", label="Front Surface")
+    # viz.plot_surface(back, color="black", label="Focusing Back Surface")
+    # viz.plot_rays(sim.paths, alpha=0.5)
+    # viz.show()
 
 
 if __name__ == "__main__":

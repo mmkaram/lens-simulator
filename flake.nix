@@ -6,17 +6,19 @@
   outputs =
     { nixpkgs, ... }:
     let
-      pkgs = nixpkgs.legacyPackages."x86_64-linux";
+      system = "x86_64-linux";
+      pkgs = import nixpkgs {
+        system = system;
+        config.allowUnfree = true;
+      };
     in
     {
-      devShells.x86_64-linux.default = pkgs.mkShell {
-        buildInputs = [
-          (pkgs.python312.withPackages (
-            ps: with ps; [
-              torch
-              matplotlib
-            ]
-          ))
+      devShells.${system}.default = pkgs.mkShell {
+        packages = with pkgs; [
+          python312
+          python312Packages.matplotlib
+          python312Packages.torchWithCuda
+          cudaPackages.cudatoolkit
         ];
       };
     };
