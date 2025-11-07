@@ -169,3 +169,55 @@ class Lens:
         if hasattr(self.back_surface, "to"):
             self.back_surface.to(device)
         return self
+
+
+import matplotlib.pyplot as plt
+
+
+class MeasurementSurface(LineSurface):
+    """
+    A line surface that acts as a measurement plane — rays intersect it,
+    and we record hit positions to estimate ray density (flux distribution).
+    """
+
+    def __init__(
+        self,
+        x_pos: float,
+        y_min: float = -10.0,
+        y_max: float = 10.0,
+        bins: int = 200,
+        label: str = "Measurement Plane",
+        plot: bool = True,
+    ):
+        super().__init__(x_pos, y_min, y_max, n_front=1.0, n_back=1.0)
+        self.bins = bins
+        self.label = label
+        self.plot_histogram = plot
+
+    @torch.no_grad()
+    def measure_density(self, rays):
+        """Compute intersection y-positions and histogram them."""
+        hits = self.intersect(rays)
+        valid = ~torch.isnan(hits).any(dim=-1)
+        hit_y = hits[valid, 1].detach().cpu()
+
+        counts, edges = torch.histogram(
+            hit_y,
+            bins=self.bins,
+            range=(self.t_min, self.t_max),
+        )
+
+        centers = 0.5 * (edges[1:] + edges[:-1])
+        density = counts / counts.sum()  # normalize
+
+        if self.plot_histogram:
+            plt.figure(figsize=(6, 4))
+            plt.plot(centers.numpy(), density.numpy(), color="blue")
+            plt.title(self.label)
+            plt.xlabel("y-position (on measurement plane)")
+            plt.ylabel("Normalized ray density")
+            plt.grid(True)
+            plt.tight_layout()
+            plt.show()
+
+        return centers, density
