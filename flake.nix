@@ -8,16 +8,21 @@
     let
       system = "x86_64-linux";
       pkgs = import nixpkgs {
-        system = system;
+        inherit system;
         config.allowUnfree = true;
       };
+
+      devEnv = builtins.getEnv "NIX_DEV_ENV";
+
+      torch =
+        if devEnv == "desktop" then pkgs.python312Packages.torchWithCuda else pkgs.python312Packages.torch;
     in
     {
       devShells.${system}.default = pkgs.mkShell {
         packages = with pkgs; [
           python312
           python312Packages.matplotlib
-          python312Packages.torchWithCuda
+          torch
           cudaPackages.cudatoolkit
         ];
       };
